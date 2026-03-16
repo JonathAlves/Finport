@@ -1,6 +1,6 @@
 enum Fortnight { first, second }
 
-enum MovementCategory { food, house, debits, entertainment, other }
+enum MovementCategory { food, house, debits, entertainment, health, study, bills, other }
 
 extension FortnightPtBr on Fortnight {
   String get label => switch (this) {
@@ -26,6 +26,9 @@ extension MovementCategoryPtBr on MovementCategory {
         MovementCategory.house => 'Moradia',
         MovementCategory.debits => 'Dívidas',
         MovementCategory.entertainment => 'Lazer',
+        MovementCategory.health => 'Saúde',
+        MovementCategory.study => 'Estudo',
+        MovementCategory.bills => 'Contas',
         MovementCategory.other => 'Outros',
       };
 
@@ -34,6 +37,9 @@ extension MovementCategoryPtBr on MovementCategory {
         MovementCategory.house => 'house',
         MovementCategory.debits => 'debits',
         MovementCategory.entertainment => 'entertainment',
+        MovementCategory.health => 'health',
+        MovementCategory.study => 'study',
+        MovementCategory.bills => 'bills',
         MovementCategory.other => 'other',
       };
 
@@ -42,6 +48,9 @@ extension MovementCategoryPtBr on MovementCategory {
         'house' => MovementCategory.house,
         'debits' => MovementCategory.debits,
         'entertainment' => MovementCategory.entertainment,
+        'health' => MovementCategory.health,
+        'study' => MovementCategory.study,
+        'bills' => MovementCategory.bills,
         'other' => MovementCategory.other,
         _ => MovementCategory.other,
       };
@@ -61,6 +70,7 @@ class Movement {
     this.installmentQuantity,
     this.installmentPurchaseId,
     required this.createdAt,
+    required this.month,
   });
 
   final String id;
@@ -75,6 +85,7 @@ class Movement {
   final int? installmentQuantity;
   final String? installmentPurchaseId;
   final DateTime createdAt;
+  final int month;
 
   static Movement fromMap(Map<String, dynamic> map) {
     return Movement(
@@ -92,6 +103,7 @@ class Movement {
       installmentPurchaseId: map['installmentPurchaseId'] as String?,
       createdAt: DateTime.tryParse((map['createdAt'] as String? ?? '')) ??
           DateTime.fromMillisecondsSinceEpoch(0),
+      month: (map['month'] as num? ?? DateTime.now().month).toInt(),
     );
   }
 
@@ -104,6 +116,7 @@ class Movement {
       'category': category.dbValue,
       'isInstallmentPurchase': isInstallmentPurchase,
       'installmentPurchaseId': installmentPurchaseId,
+      'month': month,
     };
 
     if (isInstallmentPurchase) {

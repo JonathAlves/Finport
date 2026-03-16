@@ -134,6 +134,13 @@ class _HomePageState extends State<HomePage> {
   String _formatValueForField(double value) =>
       value.toStringAsFixed(2).replaceAll('.', ',');
 
+  double _valueForTotals(Movement m) {
+    if (m.isInstallmentPurchase) {
+      return m.installmentValue ?? 0;
+    }
+    return m.value;
+  }
+
   double? _parsePtBrNumber(String raw) {
     final digits = raw.replaceAll(RegExp(r'[^0-9]'), '');
     if (digits.isEmpty) return null;
@@ -185,6 +192,7 @@ class _HomePageState extends State<HomePage> {
               currentInstallment: 1,
               isActive: qty > 1,
               createdAt: DateTime.now(),
+              month: DateTime.now().month,
             ),
           );
           installmentPurchaseId = created.id;
@@ -225,6 +233,7 @@ class _HomePageState extends State<HomePage> {
             installmentQuantity: installmentQuantity,
             installmentPurchaseId: installmentPurchaseId,
             createdAt: DateTime.now(),
+            month: DateTime.now().month,
           ),
         );
 
@@ -249,6 +258,7 @@ class _HomePageState extends State<HomePage> {
           'installmentValue': installmentValue,
           'installmentQuantity': installmentQuantity,
           'installmentPurchaseId': installmentPurchaseId,
+          'month': _editing!.month,
         };
 
         await _movementRepo.update(_editing!.id, patch);
@@ -298,6 +308,10 @@ class _HomePageState extends State<HomePage> {
     final second =
         _movements.where((m) => m.fortnight == Fortnight.second).toList();
 
+    final monthTotal =
+        _movements.fold<double>(0, (sum, m) => sum + _valueForTotals(m));
+    final monthLabel = DateFormat.MMMM('pt_BR').format(DateTime.now());
+
     return Scaffold(
       appBar: AppBar(
         centerTitle: true,
@@ -314,6 +328,16 @@ class _HomePageState extends State<HomePage> {
               child: ListView(
                 padding: const EdgeInsets.all(16),
                 children: [
+                  Text(
+                    monthLabel[0].toUpperCase() + monthLabel.substring(1),
+                    style: const TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.w500,
+                      color: Colors.black54,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 8),
                   _buildFormCard(context),
                   const SizedBox(height: 12),
                   _buildFortnightCard(
@@ -329,6 +353,8 @@ class _HomePageState extends State<HomePage> {
                   ),
                   const SizedBox(height: 16),
                   _buildPieCard(),
+                  const SizedBox(height: 12),
+                  _buildMonthTotalCard(monthTotal),
                   const SizedBox(height: 16),
                 ],
               ),
@@ -349,6 +375,15 @@ class _HomePageState extends State<HomePage> {
   }
 
   Widget _buildFormCard(BuildContext context) {
+    final currentMonth = DateTime.now().month;
+    final installmentIdsWithMovementThisMonth = _movements
+        .where((m) =>
+            m.isInstallmentPurchase &&
+            m.month == currentMonth &&
+            m.installmentPurchaseId != null)
+        .map((m) => m.installmentPurchaseId)
+        .toSet();
+
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -407,36 +442,34 @@ class _HomePageState extends State<HomePage> {
               Row(
                 children: [
                   Expanded(
-                    child: DropdownMenu<Fortnight>(
-                      initialSelection: _fortnight,
-                      dropdownMenuEntries: Fortnight.values
-                          .map(
-                            (f) => DropdownMenuEntry<Fortnight>(
-                              value: f,
-                              label: f.label,
-                            ),
-                          )
-                          .toList(),
-                      label: const Text('Quinzena'),
-                      onSelected: (v) => setState(() => _fortnight = v!),
-                    )
-                  ),
+                      child: DropdownMenu<Fortnight>(
+                    initialSelection: _fortnight,
+                    dropdownMenuEntries: Fortnight.values
+                        .map(
+                          (f) => DropdownMenuEntry<Fortnight>(
+                            value: f,
+                            label: f.label,
+                          ),
+                        )
+                        .toList(),
+                    label: const Text('Quinzena'),
+                    onSelected: (v) => setState(() => _fortnight = v!),
+                  )),
                   const SizedBox(width: 12),
                   Expanded(
-                    child: DropdownMenu<MovementCategory>(
-                      initialSelection: _category,
-                      dropdownMenuEntries: MovementCategory.values
-                          .map(
-                            (c) => DropdownMenuEntry<MovementCategory>(
-                              value: c,
-                              label: c.label,
-                            ),
-                          )
-                          .toList(),
-                      label: const Text('Categoria'),
-                      onSelected: (v) => setState(() => _category = v!),
-                    )
-                  ),
+                      child: DropdownMenu<MovementCategory>(
+                    initialSelection: _category,
+                    dropdownMenuEntries: MovementCategory.values
+                        .map(
+                          (c) => DropdownMenuEntry<MovementCategory>(
+                            value: c,
+                            label: c.label,
+                          ),
+                        )
+                        .toList(),
+                    label: const Text('Categoria'),
+                    onSelected: (v) => setState(() => _category = v!),
+                  )),
                 ],
               ),
               const SizedBox(height: 12),
@@ -474,33 +507,37 @@ class _HomePageState extends State<HomePage> {
                 Row(
                   children: [
                     Expanded(
-                      child: DropdownMenu<InstallmentPurchase>(
-                        controller: _installmentSelectCtrl,
-                        enabled: !_creatingNewInstallment,
-                        initialSelection:
-                            _creatingNewInstallment ? null : _selectedInstallment,
-                        dropdownMenuEntries: _installments
-                            .map(
-                              (p) => DropdownMenuEntry<InstallmentPurchase>(
-                                value: p,
-                                label: p.label,
-                              ),
-                            )
-                            .toList(),
-                        label: const Text('Compra parcelada (existente)'),
-                        onSelected: (v) {
-                          setState(() {
-                            _selectedInstallment = v;
-                            if (v != null) {
-                              _descCtrl.text = v.description;
-                              final total =
-                                  v.installmentQuantity * v.installmentValue;
-                              _valueCtrl.text = _formatValueForField(total);
-                            }
-                          });
-                        },
-                      )
-                    ),
+                        child: DropdownMenu<InstallmentPurchase>(
+                      controller: _installmentSelectCtrl,
+                      enabled: !_creatingNewInstallment,
+                      initialSelection: _creatingNewInstallment
+                          ? null
+                          : _selectedInstallment,
+                      dropdownMenuEntries: _installments.map((p) {
+                        final alreadyExists =
+                            installmentIdsWithMovementThisMonth.contains(p.id);
+                        return DropdownMenuEntry<InstallmentPurchase>(
+                          value: p,
+                          label: alreadyExists
+                              ? '${p.label} (já incluído)'
+                              : p.label,
+                          enabled: !alreadyExists,
+                        );
+                      }).toList(),
+                      label: const Text('Compra parcelada (existente)'),
+                      onSelected: (v) {
+                        setState(() {
+                          _selectedInstallment = v;
+                          if (v != null) {
+                            _descCtrl.text = v.description;
+                            _category = MovementCategory.debits;
+                            final total =
+                                v.installmentQuantity * v.installmentValue;
+                            _valueCtrl.text = _formatValueForField(total);
+                          }
+                        });
+                      },
+                    )),
                     const SizedBox(width: 12),
                     FilledButton.tonalIcon(
                       onPressed: () {
@@ -515,8 +552,10 @@ class _HomePageState extends State<HomePage> {
                           }
                         });
                       },
-                      icon: Icon(_creatingNewInstallment ? Icons.close : Icons.add),
-                      label: Text(_creatingNewInstallment ? 'Cancelar' : 'Nova'),
+                      icon: Icon(
+                          _creatingNewInstallment ? Icons.close : Icons.add),
+                      label:
+                          Text(_creatingNewInstallment ? 'Cancelar' : 'Nova'),
                     ),
                   ],
                 ),
@@ -525,7 +564,8 @@ class _HomePageState extends State<HomePage> {
                     padding: const EdgeInsets.only(top: 6),
                     child: Builder(
                       builder: (context) {
-                        if (_selectedInstallment != null) return const SizedBox.shrink();
+                        if (_selectedInstallment != null)
+                          return const SizedBox.shrink();
                         return const Text(
                           'Selecione uma compra parcelada.',
                           style: TextStyle(color: Color(0xFFB42318)),
@@ -587,7 +627,9 @@ class _HomePageState extends State<HomePage> {
               FilledButton.icon(
                 onPressed: _loading ? null : _submit,
                 icon: Icon(_editing == null ? Icons.edit : Icons.save),
-                label: Text(_editing == null ? 'Criar Movimento' : 'Atualizar Movimento'),
+                label: Text(_editing == null
+                    ? 'Criar Movimento'
+                    : 'Atualizar Movimento'),
                 style: FilledButton.styleFrom(
                   padding: const EdgeInsets.symmetric(vertical: 14),
                 ),
@@ -611,6 +653,7 @@ class _HomePageState extends State<HomePage> {
     required Color headerColor,
     required List<Movement> movements,
   }) {
+    final total = movements.fold<double>(0, (sum, m) => sum + _valueForTotals(m));
     return Card(
       child: Column(
         children: [
@@ -633,21 +676,38 @@ class _HomePageState extends State<HomePage> {
               child: Text('Nenhum movimento nesta quinzena.'),
             )
           else
-            ListView.separated(
+            Padding(
               padding: const EdgeInsets.all(12),
-              shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(),
-              itemCount: movements.length,
-              separatorBuilder: (_, i) => const SizedBox(height: 8),
-              itemBuilder: (context, i) {
-                final m = movements[i];
-                return _MovementTile(
-                  movement: m,
-                  currency: _formatCurrency(m.value),
-                  onEdit: () => _startEditing(m),
-                  onDelete: () => _deleteMovement(m),
-                );
-              },
+              child: Column(
+                children: [
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: Text(
+                      'Total: ${_formatCurrency(total)}',
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w700,
+                        color: Colors.black87,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  ListView.separated(
+                    shrinkWrap: true,
+                    physics: const NeverScrollableScrollPhysics(),
+                    itemCount: movements.length,
+                    separatorBuilder: (_, i) => const SizedBox(height: 8),
+                    itemBuilder: (context, i) {
+                      final m = movements[i];
+                      return _MovementTile(
+                        movement: m,
+                        currency: _formatCurrency(m.isInstallmentPurchase ? m.installmentValue ?? m.value : m.value),
+                        onEdit: () => _startEditing(m),
+                        onDelete: () => _deleteMovement(m),
+                      );
+                    },
+                  ),
+                ],
+              ),
             ),
         ],
       ),
@@ -659,7 +719,7 @@ class _HomePageState extends State<HomePage> {
       for (final c in MovementCategory.values) c: 0,
     };
     for (final m in _movements) {
-      totals[m.category] = (totals[m.category] ?? 0) + m.value;
+      totals[m.category] = (totals[m.category] ?? 0) + _valueForTotals(m);
     }
 
     final totalValue = totals.values.fold<double>(0, (a, b) => a + b);
@@ -668,6 +728,9 @@ class _HomePageState extends State<HomePage> {
       MovementCategory.house: const Color(0xFF5AA8FF),
       MovementCategory.debits: const Color(0xFF47C19E),
       MovementCategory.entertainment: const Color(0xFFF2A64D),
+      MovementCategory.health: const Color(0xFF9B5DE5),
+      MovementCategory.study: const Color(0xFF00BBF9),
+      MovementCategory.bills: const Color(0xFFF15BB5),
       MovementCategory.other: const Color(0xFFB07AD9),
     };
 
@@ -700,48 +763,98 @@ class _HomePageState extends State<HomePage> {
                 child: Text('Sem dados para gerar o gráfico.'),
               )
             else
-              Row(
+              Column(
                 children: [
                   SizedBox(
-                    height: 140,
-                    width: 140,
-                    child: PieChart(
-                      PieChartData(
-                        sections: sections,
-                        centerSpaceRadius: 40,
-                        sectionsSpace: 2,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: MovementCategory.values.map((c) {
-                        final v = totals[c] ?? 0;
-                        final pct = totalValue <= 0 ? 0 : (v / totalValue) * 100;
-                        return Padding(
-                          padding: const EdgeInsets.symmetric(vertical: 4),
-                          child: Row(
-                            children: [
-                              Container(
-                                width: 10,
-                                height: 10,
-                                decoration: BoxDecoration(
-                                  color: colors[c],
-                                  shape: BoxShape.circle,
-                                ),
-                              ),
-                              const SizedBox(width: 8),
-                              Expanded(child: Text('${c.label}  ${pct.toStringAsFixed(1)}%')),
-                            ],
+                    height: 200,
+                    child: Row(
+                      children: [
+                        SizedBox(
+                          height: 200,
+                          width: 200,
+                          child: PieChart(
+                            PieChartData(
+                              sections: sections,
+                              centerSpaceRadius: 40,
+                              sectionsSpace: 2,
+                            ),
                           ),
-                        );
-                      }).toList(),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: MovementCategory.values.map((c) {
+                              final v = totals[c] ?? 0;
+                              final pct =
+                                  totalValue <= 0 ? 0 : (v / totalValue) * 100;
+                              return Padding(
+                                padding:
+                                    const EdgeInsets.symmetric(vertical: 2),
+                                child: Row(
+                                  children: [
+                                    Container(
+                                      width: 8,
+                                      height: 8,
+                                      decoration: BoxDecoration(
+                                        color: colors[c],
+                                        shape: BoxShape.rectangle,
+                                      ),
+                                    ),
+                                    const SizedBox(width: 6),
+                                    Expanded(
+                                      child: Text(
+                                        '${c.label}  ${pct.toStringAsFixed(1)}%',
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              );
+                            }).toList(),
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                 ],
               ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMonthTotalCard(double monthTotal) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Row(
+          children: [
+            const Icon(Icons.summarize, color: Color(0xFF2F6FB8)),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Total do mês',
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    _formatCurrency(monthTotal),
+                    style: const TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ],
+              ),
+            ),
           ],
         ),
       ),
@@ -789,6 +902,9 @@ class _MovementTile extends StatelessWidget {
         MovementCategory.house => Icons.home,
         MovementCategory.debits => Icons.credit_card,
         MovementCategory.entertainment => Icons.movie,
+        MovementCategory.health => Icons.health_and_safety,
+        MovementCategory.study => Icons.school,
+        MovementCategory.bills => Icons.credit_card,
         MovementCategory.other => Icons.category,
       };
 

@@ -7,6 +7,7 @@ class InstallmentPurchase {
     required this.currentInstallment,
     required this.isActive,
     required this.createdAt,
+    required this.month,
   });
 
   final String id;
@@ -16,6 +17,7 @@ class InstallmentPurchase {
   final int currentInstallment;
   final bool isActive;
   final DateTime createdAt;
+  final int month;
 
   int get remaining => (installmentQuantity - currentInstallment).clamp(0, 1 << 30);
 
@@ -36,6 +38,7 @@ class InstallmentPurchase {
       isActive: (map['isActive'] as bool? ?? true),
       createdAt: DateTime.tryParse((map['createdAt'] as String? ?? '')) ??
           DateTime.fromMillisecondsSinceEpoch(0),
+      month: (map['month'] as num? ?? DateTime.now().month).toInt(),
     );
   }
 
@@ -45,6 +48,7 @@ class InstallmentPurchase {
         'installmentValue': installmentValue,
         'currentInstallment': currentInstallment,
         'isActive': isActive,
+        'month': month,
       };
 }
 

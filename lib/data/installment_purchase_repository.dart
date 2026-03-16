@@ -17,37 +17,51 @@ class InstallmentPurchaseRepository {
   }
 
   Future<InstallmentPurchase> insert(InstallmentPurchase p) async {
-    final data =
-        await Supa.client.from(table).insert(p.toInsertMap()).select('*').single();
+    final data = await Supa.client
+        .from(table)
+        .insert(p.toInsertMap())
+        .select('*')
+        .single();
     return InstallmentPurchase.fromMap((data as Map).cast<String, dynamic>());
   }
 
   Future<InstallmentPurchase> incrementInstallment(String id) async {
-    final current = await Supa.client.from(table).select('*').eq('id', id).single();
-    final p = InstallmentPurchase.fromMap((current as Map).cast<String, dynamic>());
+    final current = await Supa.client
+        .from(table)
+        .select('*')
+        .eq('id', id)
+        .single();
+    final p = InstallmentPurchase.fromMap(
+      (current as Map).cast<String, dynamic>(),
+    );
 
     final next = p.currentInstallment + 1;
     final isActive = next < p.installmentQuantity;
 
     final updated = await Supa.client
         .from(table)
-        .update({
-          'currentInstallment': next,
-          'isActive': isActive,
-        })
+        .update({'currentInstallment': next, 'isActive': isActive})
         .eq('id', id)
         .select('*')
         .single();
 
-    return InstallmentPurchase.fromMap((updated as Map).cast<String, dynamic>());
+    return InstallmentPurchase.fromMap(
+      (updated as Map).cast<String, dynamic>(),
+    );
   }
 
   Future<InstallmentPurchase> setCurrentInstallment({
     required String id,
     required int currentInstallment,
   }) async {
-    final current = await Supa.client.from(table).select('*').eq('id', id).single();
-    final p = InstallmentPurchase.fromMap((current as Map).cast<String, dynamic>());
+    final current = await Supa.client
+        .from(table)
+        .select('*')
+        .eq('id', id)
+        .single();
+    final p = InstallmentPurchase.fromMap(
+      (current as Map).cast<String, dynamic>(),
+    );
 
     final isActive = currentInstallment < p.installmentQuantity;
     final updated = await Supa.client
@@ -60,7 +74,8 @@ class InstallmentPurchaseRepository {
         .select('*')
         .single();
 
-    return InstallmentPurchase.fromMap((updated as Map).cast<String, dynamic>());
+    return InstallmentPurchase.fromMap(
+      (updated as Map).cast<String, dynamic>(),
+    );
   }
 }
-

@@ -113,66 +113,79 @@ class _MovementTile extends StatelessWidget {
         : '';
 
     return Material(
-      color: const Color(0xFFF8FAFD),
-      borderRadius: BorderRadius.circular(12),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-        child: Row(
-          children: [
-            CircleAvatar(
-              backgroundColor: const Color(0xFFE9F1FF),
-              child: Icon(
-                _iconForCategory(movement.category),
-                color: const Color(0xFF2F6FB8),
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    movement.description,
-                    style: const TextStyle(fontWeight: FontWeight.w700),
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
+    color: const Color(0xFFF8FAFD),
+    borderRadius: BorderRadius.circular(12),
+    child: Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 12),
+      child: Row(
+        children: [
+          CircleAvatar(
+            backgroundColor: const Color(0xFFE9F1FF),
+            child: Icon(_iconForCategory(movement.category), color: const Color(0xFF2F6FB8)),
+          ),
+          const SizedBox(width: 10),
+          // Usamos Expanded para que a coluna ocupe o espaço restante
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  movement.description,
+                  style: const TextStyle(fontWeight: FontWeight.w700),
+                  maxLines: 1, // Evita quebra de linha na descrição
+                  overflow: TextOverflow.ellipsis, // Adiciona "..." se for muito longo
+                ),
+                const SizedBox(height: 2),
+                // FittedBox garante que o texto do valor diminua levemente se não couber
+                FittedBox(
+                  fit: BoxFit.scaleDown,
+                  alignment: Alignment.centerLeft,
+                  child: Text(
                     '$currency$installmentText',
-                    style: const TextStyle(color: Colors.black87),
+                    style: const TextStyle(color: Colors.black87, fontSize: 13),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          // Envolvemos o Status para ele não "esticar"
+          Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: _chipColor(paid),
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                child: Text(
+                  paid ? 'PAGO' : 'PENDENTE',
+                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 10),
+                ),
+              ),
+              // Agrupando os botões para economizar espaço horizontal
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  IconButton(
+                    visualDensity: VisualDensity.compact, // Reduz o padding interno
+                    onPressed: onEdit,
+                    icon: const Icon(Icons.edit, size: 20, color: Color(0xFF2F6FB8)),
+                  ),
+                  IconButton(
+                    visualDensity: VisualDensity.compact,
+                    onPressed: onDelete,
+                    icon: const Icon(Icons.delete_outline, size: 20, color: Color(0xFFD14B4B)),
                   ),
                 ],
               ),
-            ),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-              decoration: BoxDecoration(
-                color: _chipColor(paid),
-                borderRadius: BorderRadius.circular(999),
-              ),
-              child: Text(
-                paid ? 'PAGO' : 'PENDENTE',
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.w700,
-                  fontSize: 12,
-                ),
-              ),
-            ),
-            const SizedBox(width: 8),
-            IconButton(
-              onPressed: onEdit,
-              icon: const Icon(Icons.edit, color: Color(0xFF2F6FB8)),
-              tooltip: 'Atualizar movimento',
-            ),
-            IconButton(
-              onPressed: onDelete,
-              icon: const Icon(Icons.delete_outline, color: Color(0xFFD14B4B)),
-              tooltip: 'Excluir movimento',
-            ),
-          ],
-        ),
+            ],
+          ),
+        ],
       ),
-    );
+    ),
+  );
   }
 }
 

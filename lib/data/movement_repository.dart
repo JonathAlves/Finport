@@ -5,12 +5,12 @@ class MovementRepository {
   static const table = 'movements';
 
   Future<List<Movement>> listAll({int? month, int? year}) async {
-    final query = Supa.client.from(table).select('*');
+    var query = Supa.client.from(table).select('*');
     if (month != null) {
-      query.eq('month', month);
+      query = query.eq('month', month);
     }
     if (year != null) {
-      query.eq('year', year);
+      query = query.eq('year', year);
     }
     final data = await query.order('createdAt', ascending: false);
     return (data as List)

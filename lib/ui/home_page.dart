@@ -595,7 +595,6 @@ class _MonthPageState extends State<MonthPage> {
 @override
 void didUpdateWidget(covariant MonthPage oldWidget) {
   super.didUpdateWidget(oldWidget);
-  // Se o mês ou ano mudar enquanto o widget está na árvore, recarrega os dados
   if (oldWidget.month != widget.month || oldWidget.year != widget.year) {
     _refresh();
   }

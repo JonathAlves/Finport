@@ -1,4 +1,4 @@
-import 'dart:math';
+import 'dart:async';
 
 import 'package:finport/data/installment_purchase_repository.dart';
 import 'package:finport/data/movement_repository.dart';
@@ -17,22 +17,94 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> {
+  final _movementRepo = MovementRepository();
   late final PageController _pageCtrl;
+  Timer? _monthWatcher;
+  DateTime _lastObservedNow = DateTime.now();
+  List<DateTime> _visibleMonths = const [];
+  bool _loadingMonths = true;
 
   @override
   void initState() {
     super.initState();
-    _pageCtrl = PageController(initialPage: DateTime.now().month - 1);
+    _pageCtrl = PageController(initialPage: 0);
+    _loadVisibleMonths(jumpToCurrentMonth: true);
+    _monthWatcher = Timer.periodic(const Duration(minutes: 1), (_) {
+      final now = DateTime.now();
+      final changedMonth =
+          now.month != _lastObservedNow.month ||
+          now.year != _lastObservedNow.year;
+      if (changedMonth) {
+        _lastObservedNow = now;
+        _loadVisibleMonths(jumpToCurrentMonth: true);
+      }
+    });
   }
 
   @override
   void dispose() {
+    _monthWatcher?.cancel();
     _pageCtrl.dispose();
     super.dispose();
   }
 
+  Future<void> _loadVisibleMonths({bool jumpToCurrentMonth = false}) async {
+    setState(() => _loadingMonths = true);
+    try {
+      final now = DateTime.now();
+      final all = await _movementRepo.listAll();
+      final installments = all.where((m) => m.isInstallmentPurchase);
+
+      final hasFutureYearInstallment = installments.any(
+        (m) => m.year > now.year,
+      );
+      final latestInstallment = installments.fold<Movement?>(null, (latest, m) {
+        if (latest == null) return m;
+        final latestKey = latest.year * 100 + latest.month;
+        final currentKey = m.year * 100 + m.month;
+        return currentKey > latestKey ? m : latest;
+      });
+
+      final endYear = hasFutureYearInstallment
+          ? (latestInstallment?.year ?? now.year)
+          : now.year;
+      final endMonth = hasFutureYearInstallment
+          ? (latestInstallment?.month ?? 12)
+          : 12;
+
+      final generated = <DateTime>[];
+      var cursor = DateTime(now.year, 1);
+      final endDate = DateTime(endYear, endMonth);
+      while (!cursor.isAfter(endDate)) {
+        generated.add(cursor);
+        cursor = DateTime(cursor.year, cursor.month + 1);
+      }
+
+      if (!mounted) return;
+      setState(() {
+        _visibleMonths = generated;
+      });
+
+      if (jumpToCurrentMonth && _visibleMonths.isNotEmpty) {
+        final currentIndex = _visibleMonths.indexWhere(
+          (d) => d.month == now.month && d.year == now.year,
+        );
+        final safeIndex = currentIndex >= 0 ? currentIndex : 0;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted || !_pageCtrl.hasClients) return;
+          _pageCtrl.jumpToPage(safeIndex);
+        });
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _loadingMonths = false);
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
+    final now = DateTime.now();
     return Scaffold(
       appBar: AppBar(
         centerTitle: true,
@@ -41,14 +113,24 @@ class _HomePageState extends State<HomePage> {
           style: TextStyle(fontWeight: FontWeight.w700),
         ),
       ),
-      body: PageView.builder(
-        controller: _pageCtrl,
-        itemBuilder: (context, index) {
-          final now = DateTime.now();
-          final month = index + 1;
-          return MonthPage(key: ValueKey(month), month: month, year: now.year);
-        },
-      ),
+      body: _loadingMonths
+          ? const Center(child: CircularProgressIndicator())
+          : PageView.builder(
+              controller: _pageCtrl,
+              itemCount: _visibleMonths.length,
+              itemBuilder: (context, index) {
+                final date = _visibleMonths[index];
+                return MonthPage(
+                  key: ValueKey('${date.year}-${date.month}'),
+                  month: date.month,
+                  year: date.year,
+                  forceShowForm:
+                      date.month == now.month && date.year == now.year,
+                  onCreated: () => _loadVisibleMonths(jumpToCurrentMonth: true),
+                  onDataChanged: () => _loadVisibleMonths(),
+                );
+              },
+            ),
     );
   }
 }
@@ -79,12 +161,14 @@ class _MovementTile extends StatelessWidget {
   const _MovementTile({
     required this.movement,
     required this.currency,
+    required this.onTogglePaid,
     required this.onEdit,
     required this.onDelete,
   });
 
   final Movement movement;
   final String currency;
+  final ValueChanged<bool> onTogglePaid;
   final VoidCallback onEdit;
   final VoidCallback onDelete;
 
@@ -113,79 +197,116 @@ class _MovementTile extends StatelessWidget {
         : '';
 
     return Material(
-    color: const Color(0xFFF8FAFD),
-    borderRadius: BorderRadius.circular(12),
-    child: Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 12),
-      child: Row(
-        children: [
-          CircleAvatar(
-            backgroundColor: const Color(0xFFE9F1FF),
-            child: Icon(_iconForCategory(movement.category), color: const Color(0xFF2F6FB8)),
-          ),
-          const SizedBox(width: 10),
-          // Usamos Expanded para que a coluna ocupe o espaço restante
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  movement.description,
-                  style: const TextStyle(fontWeight: FontWeight.w700),
-                  maxLines: 1, // Evita quebra de linha na descrição
-                  overflow: TextOverflow.ellipsis, // Adiciona "..." se for muito longo
-                ),
-                const SizedBox(height: 2),
-                // FittedBox garante que o texto do valor diminua levemente se não couber
-                FittedBox(
-                  fit: BoxFit.scaleDown,
-                  alignment: Alignment.centerLeft,
-                  child: Text(
-                    '$currency$installmentText',
-                    style: const TextStyle(color: Colors.black87, fontSize: 13),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(width: 8),
-          // Envolvemos o Status para ele não "esticar"
-          Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                decoration: BoxDecoration(
-                  color: _chipColor(paid),
-                  borderRadius: BorderRadius.circular(999),
-                ),
-                child: Text(
-                  paid ? 'PAGO' : 'PENDENTE',
-                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 10),
-                ),
+      color: const Color(0xFFF8FAFD),
+      borderRadius: BorderRadius.circular(12),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 12),
+        child: Row(
+          children: [
+            CircleAvatar(
+              backgroundColor: const Color(0xFFE9F1FF),
+              child: Icon(
+                _iconForCategory(movement.category),
+                color: const Color(0xFF2F6FB8),
               ),
-              // Agrupando os botões para economizar espaço horizontal
-              Row(
-                mainAxisSize: MainAxisSize.min,
+            ),
+            const SizedBox(width: 10),
+            // Usamos Expanded para que a coluna ocupe o espaço restante
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  IconButton(
-                    visualDensity: VisualDensity.compact, // Reduz o padding interno
-                    onPressed: onEdit,
-                    icon: const Icon(Icons.edit, size: 20, color: Color(0xFF2F6FB8)),
+                  Text(
+                    movement.description,
+                    style: const TextStyle(fontWeight: FontWeight.w700),
+                    maxLines: 1, // Evita quebra de linha na descrição
+                    overflow: TextOverflow
+                        .ellipsis, // Adiciona "..." se for muito longo
                   ),
-                  IconButton(
-                    visualDensity: VisualDensity.compact,
-                    onPressed: onDelete,
-                    icon: const Icon(Icons.delete_outline, size: 20, color: Color(0xFFD14B4B)),
+                  const SizedBox(height: 2),
+                  // FittedBox garante que o texto do valor diminua levemente se não couber
+                  FittedBox(
+                    fit: BoxFit.scaleDown,
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      '$currency$installmentText',
+                      style: const TextStyle(
+                        color: Colors.black87,
+                        fontSize: 13,
+                      ),
+                    ),
                   ),
                 ],
               ),
-            ],
-          ),
-        ],
+            ),
+            const SizedBox(width: 8),
+            // Envolvemos o Status para ele não "esticar"
+            Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 4,
+                      ),
+                      decoration: BoxDecoration(
+                        color: _chipColor(paid),
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                      child: Text(
+                        paid ? 'PAGO' : 'PENDENTE',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w700,
+                          fontSize: 10,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 4),
+                    Transform.scale(
+                      scale: 0.85,
+                      child: Switch(
+                        value: paid,
+                        onChanged: onTogglePaid,
+                        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      ),
+                    ),
+                  ],
+                ),
+                // Agrupando os botões para economizar espaço horizontal
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    IconButton(
+                      visualDensity:
+                          VisualDensity.compact, // Reduz o padding interno
+                      onPressed: onEdit,
+                      icon: const Icon(
+                        Icons.edit,
+                        size: 20,
+                        color: Color(0xFF2F6FB8),
+                      ),
+                    ),
+                    IconButton(
+                      visualDensity: VisualDensity.compact,
+                      onPressed: onDelete,
+                      icon: const Icon(
+                        Icons.delete_outline,
+                        size: 20,
+                        color: Color(0xFFD14B4B),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ],
+        ),
       ),
-    ),
-  );
+    );
   }
 }
 
@@ -215,10 +336,20 @@ class _CurrencyInputFormatter extends TextInputFormatter {
 }
 
 class MonthPage extends StatefulWidget {
-  const MonthPage({super.key, required this.month, required this.year});
+  const MonthPage({
+    super.key,
+    required this.month,
+    required this.year,
+    required this.forceShowForm,
+    required this.onCreated,
+    required this.onDataChanged,
+  });
 
   final int month;
   final int year;
+  final bool forceShowForm;
+  final VoidCallback onCreated;
+  final VoidCallback onDataChanged;
 
   @override
   State<MonthPage> createState() => _MonthPageState();
@@ -226,11 +357,9 @@ class MonthPage extends StatefulWidget {
 
 class _MonthPageState extends State<MonthPage> {
   final _movementRepo = MovementRepository();
-  final _installmentRepo = InstallmentPurchaseRepository();
 
   bool _loading = false;
   List<Movement> _movements = const [];
-  List<InstallmentPurchase> _installments = const [];
 
   Movement? _editing;
 
@@ -243,12 +372,10 @@ class _MonthPageState extends State<MonthPage> {
   Future<void> _refresh() async {
     setState(() => _loading = true);
     try {
-      final results = await Future.wait([
-        _movementRepo.listAll(month: widget.month, year: widget.year),
-        _installmentRepo.listActive(),
-      ]);
-      _movements = results[0] as List<Movement>;
-      _installments = results[1] as List<InstallmentPurchase>;
+      _movements = await _movementRepo.listAll(
+        month: widget.month,
+        year: widget.year,
+      );
 
       if (_editing != null) {
         _editing = _movements
@@ -291,9 +418,23 @@ class _MonthPageState extends State<MonthPage> {
       await _movementRepo.delete(m.id);
       if (_editing?.id == m.id) _resetForm();
       await _refresh();
+      widget.onDataChanged();
       _snack('Movimento removido.');
     } catch (e) {
       _snack('Erro ao remover: $e');
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _togglePaid(Movement m, bool paid) async {
+    setState(() => _loading = true);
+    try {
+      await _movementRepo.update(m.id, {'isPaid': paid});
+      await _refresh();
+      _snack('Status atualizado.');
+    } catch (e) {
+      _snack('Erro ao atualizar pagamento: $e');
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -320,9 +461,7 @@ class _MonthPageState extends State<MonthPage> {
     final monthDate = DateTime(widget.year, widget.month);
     final monthLabel = DateFormat.MMMM('pt_BR').format(monthDate);
 
-    final isCurrentMonth =
-        widget.month == DateTime.now().month &&
-        widget.year == DateTime.now().year;
+    final isCurrentMonth = widget.forceShowForm;
 
     return SafeArea(
       child: Stack(
@@ -345,10 +484,9 @@ class _MonthPageState extends State<MonthPage> {
                 if (isCurrentMonth)
                   MovementForm(
                     key: ValueKey(_editing),
-                    installments: _installments,
-                    movements: _movements,
                     editing: _editing,
                     onSave: _refresh,
+                    onPersisted: widget.onCreated,
                   ),
                 const SizedBox(height: 12),
                 _buildFortnightCard(
@@ -446,6 +584,7 @@ class _MonthPageState extends State<MonthPage> {
                               ? m.installmentValue ?? m.value
                               : m.value,
                         ),
+                        onTogglePaid: (paid) => _togglePaid(m, paid),
                         onEdit: () => _startEditing(m),
                         onDelete: () => _deleteMovement(m),
                       );
@@ -493,7 +632,7 @@ class _MonthPageState extends State<MonthPage> {
 
     return Card(
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.all(18),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -508,63 +647,59 @@ class _MonthPageState extends State<MonthPage> {
                 child: Text('Sem dados para gerar o gráfico.'),
               )
             else
-              Column(
-                children: [
-                  SizedBox(
-                    height: 200,
-                    child: Row(
-                      children: [
-                        SizedBox(
-                          height: 200,
-                          width: 200,
-                          child: PieChart(
-                            PieChartData(
-                              sections: sections,
-                              centerSpaceRadius: 40,
-                              sectionsSpace: 2,
-                            ),
-                          ),
+              SizedBox(
+                height: 240,
+                child: Row(
+                  children: [
+                    SizedBox(
+                      height: 150,
+                      width: 150,
+                      child: PieChart(
+                        PieChartData(
+                          sections: sections,
+                          centerSpaceRadius: 28,
+                          sectionsSpace: 2,
                         ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: MovementCategory.values.map((c) {
-                              final v = totals[c] ?? 0;
-                              final pct = totalValue <= 0
-                                  ? 0
-                                  : (v / totalValue) * 100;
-                              return Padding(
-                                padding: const EdgeInsets.symmetric(
-                                  vertical: 2,
-                                ),
-                                child: Row(
-                                  children: [
-                                    Container(
-                                      width: 8,
-                                      height: 8,
-                                      decoration: BoxDecoration(
-                                        color: colors[c],
-                                        shape: BoxShape.rectangle,
-                                      ),
-                                    ),
-                                    const SizedBox(width: 6),
-                                    Expanded(
-                                      child: Text(
-                                        '${c.label}  ${pct.toStringAsFixed(1)}%',
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              );
-                            }).toList(),
-                          ),
-                        ),
-                      ],
+                      ),
                     ),
-                  ),
-                ],
+                    const SizedBox(width: 18),
+                    Expanded(
+                      child: SingleChildScrollView(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: MovementCategory.values.map((c) {
+                            final v = totals[c] ?? 0;
+                            final pct = totalValue <= 0
+                                ? 0
+                                : (v / totalValue) * 100;
+                            return Padding(
+                              padding: const EdgeInsets.symmetric(vertical: 3),
+                              child: Row(
+                                children: [
+                                  Container(
+                                    width: 9,
+                                    height: 9,
+                                    decoration: BoxDecoration(
+                                      color: colors[c],
+                                      shape: BoxShape.rectangle,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 6),
+                                  Expanded(
+                                    child: Text(
+                                      '${c.label}  ${pct.toStringAsFixed(1)}%',
+                                      style: const TextStyle(fontSize: 12),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            );
+                          }).toList(),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
               ),
           ],
         ),
@@ -605,28 +740,26 @@ class _MonthPageState extends State<MonthPage> {
     );
   }
 
-@override
-void didUpdateWidget(covariant MonthPage oldWidget) {
-  super.didUpdateWidget(oldWidget);
-  if (oldWidget.month != widget.month || oldWidget.year != widget.year) {
-    _refresh();
+  @override
+  void didUpdateWidget(covariant MonthPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.month != widget.month || oldWidget.year != widget.year) {
+      _refresh();
+    }
   }
-}
 }
 
 class MovementForm extends StatefulWidget {
   const MovementForm({
     super.key,
-    required this.installments,
-    required this.movements,
     this.editing,
     required this.onSave,
+    required this.onPersisted,
   });
 
-  final List<InstallmentPurchase> installments;
-  final List<Movement> movements;
   final Movement? editing;
   final VoidCallback onSave;
+  final VoidCallback onPersisted;
 
   @override
   State<MovementForm> createState() => _MovementFormState();
@@ -642,16 +775,12 @@ class _MovementFormState extends State<MovementForm> {
   final _valueCtrl = TextEditingController();
   final _installmentQtyCtrl = TextEditingController();
   final _installmentValueCtrl = TextEditingController();
-  final _installmentSelectCtrl = TextEditingController();
 
   Fortnight _fortnight = Fortnight.first;
   late int _selectedMonth;
-  bool _isPaid = false;
   MovementCategory _category = MovementCategory.food;
   bool _isInstallment = false;
 
-  bool _creatingNewInstallment = false;
-  InstallmentPurchase? _selectedInstallment;
   bool _loading = false;
 
   @override
@@ -672,7 +801,6 @@ class _MovementFormState extends State<MovementForm> {
     _valueCtrl.dispose();
     _installmentQtyCtrl.dispose();
     _installmentValueCtrl.dispose();
-    _installmentSelectCtrl.dispose();
     super.dispose();
   }
 
@@ -682,14 +810,10 @@ class _MovementFormState extends State<MovementForm> {
     _valueCtrl.clear();
     _installmentQtyCtrl.clear();
     _installmentValueCtrl.clear();
-    _installmentSelectCtrl.clear();
     _fortnight = Fortnight.first;
     _selectedMonth = DateTime.now().month;
-    _isPaid = false;
     _category = MovementCategory.food;
     _isInstallment = false;
-    _creatingNewInstallment = false;
-    _selectedInstallment = null;
 
     setState(() {});
   }
@@ -698,22 +822,9 @@ class _MovementFormState extends State<MovementForm> {
     _descCtrl.text = m.description;
     _valueCtrl.text = _formatValueForField(m.value);
     _fortnight = m.fortnight;
-    _isPaid = m.isPaid;
     _category = m.category;
     _isInstallment = m.isInstallmentPurchase;
     _selectedMonth = m.month;
-
-    _creatingNewInstallment = false;
-    _selectedInstallment = null;
-    _installmentSelectCtrl.clear();
-
-    if (m.isInstallmentPurchase && m.installmentPurchaseId != null) {
-      _selectedInstallment = widget.installments
-          .where((p) => p.id == m.installmentPurchaseId)
-          .cast<InstallmentPurchase?>()
-          .firstOrNull;
-      _installmentSelectCtrl.text = _selectedInstallment?.label ?? '';
-    }
 
     final qty = m.installmentQuantity ?? 0;
     final unit = m.installmentValue ?? 0;
@@ -733,7 +844,7 @@ class _MovementFormState extends State<MovementForm> {
   }
 
   void _maybeRecalcTotalFromInstallment() {
-    if (!_isInstallment || !_creatingNewInstallment) return;
+    if (!_isInstallment) return;
     final qty = int.tryParse(_installmentQtyCtrl.text.trim());
     final unit = _parsePtBrNumber(_installmentValueCtrl.text);
     if (qty == null || qty <= 0 || unit == null || unit <= 0) return;
@@ -753,66 +864,86 @@ class _MovementFormState extends State<MovementForm> {
 
     setState(() => _loading = true);
     try {
+      if (widget.editing == null && _isInstallment) {
+        final qty = int.tryParse(_installmentQtyCtrl.text.trim());
+        final unit = _parsePtBrNumber(_installmentValueCtrl.text);
+        if (qty == null || qty <= 0 || unit == null || unit <= 0) {
+          _snack('Preencha quantidade e valor da parcela.');
+          return;
+        }
+
+        final now = DateTime.now();
+        final created = await _installmentRepo.insert(
+          InstallmentPurchase(
+            id: 'tmp',
+            description: _descCtrl.text.trim(),
+            installmentQuantity: qty,
+            installmentValue: unit,
+            currentInstallment: qty,
+            isActive: false,
+            createdAt: now,
+            month: now.month,
+            year: now.year,
+          ),
+        );
+
+        for (var i = 0; i < qty; i++) {
+          final installmentDate = DateTime(now.year, now.month + i);
+          await _movementRepo.insert(
+            Movement(
+              id: 'tmp',
+              description: _descCtrl.text.trim(),
+              value: value,
+              fortnight: _fortnight,
+              isPaid: false,
+              category: _category,
+              isInstallmentPurchase: true,
+              currentInstallment: i + 1,
+              installmentValue: unit,
+              installmentQuantity: qty,
+              installmentPurchaseId: created.id,
+              createdAt: now,
+              month: installmentDate.month,
+              year: installmentDate.year,
+            ),
+          );
+        }
+
+        widget.onPersisted();
+        _resetForm();
+        widget.onSave();
+        _snack('Movimentos parcelados criados com sucesso.');
+        return;
+      }
+
       String? installmentPurchaseId;
       int? currentInstallment;
       double? installmentValue;
       int? installmentQuantity;
 
       if (_isInstallment) {
-        if (_creatingNewInstallment) {
-          final qty = int.tryParse(_installmentQtyCtrl.text.trim());
-          final unit = _parsePtBrNumber(_installmentValueCtrl.text);
-          if (qty == null || qty <= 0 || unit == null || unit <= 0) {
-            _snack('Preencha quantidade e valor da parcela.');
-            return;
-          }
-
-          final now = DateTime.now();
-          final created = await _installmentRepo.insert(
-            InstallmentPurchase(
-              id: 'tmp',
-              description: _descCtrl.text.trim(),
-              installmentQuantity: qty,
-              installmentValue: unit,
-              currentInstallment: 1,
-              isActive: qty > 1,
-              createdAt: now,
-              month: _selectedMonth,
-              year: now.year,
-            ),
-          );
-          installmentPurchaseId = created.id;
-          currentInstallment = 1;
-          installmentValue = unit;
-          installmentQuantity = qty;
-        } else {
-          final selected = _selectedInstallment;
-          if (selected == null) {
-            _snack('Selecione uma compra parcelada.');
-            return;
-          }
-
-          final nextInstallment = min(
-            selected.currentInstallment + 1,
-            selected.installmentQuantity,
-          );
-
-          installmentPurchaseId = selected.id;
-          currentInstallment = nextInstallment;
-          installmentValue = selected.installmentValue;
-          installmentQuantity = selected.installmentQuantity;
+        final qty = int.tryParse(_installmentQtyCtrl.text.trim());
+        final unit = _parsePtBrNumber(_installmentValueCtrl.text);
+        if (qty == null || qty <= 0 || unit == null || unit <= 0) {
+          _snack('Preencha quantidade e valor da parcela.');
+          return;
         }
+
+        installmentPurchaseId = widget.editing?.installmentPurchaseId;
+        currentInstallment = widget.editing?.currentInstallment ?? 1;
+        installmentValue = unit;
+        installmentQuantity = qty;
       }
 
       if (widget.editing == null) {
         final now = DateTime.now();
-        final inserted = await _movementRepo.insert(
+        await _movementRepo.insert(
           Movement(
             id: 'tmp',
             description: _descCtrl.text.trim(),
             value: value,
             fortnight: _fortnight,
-            isPaid: _isPaid,
+            isPaid: false,
             category: _category,
             isInstallmentPurchase: _isInstallment,
             currentInstallment: currentInstallment,
@@ -824,22 +955,12 @@ class _MovementFormState extends State<MovementForm> {
             year: now.year,
           ),
         );
-
-        if (_isInstallment &&
-            !_creatingNewInstallment &&
-            inserted.currentInstallment != null &&
-            installmentPurchaseId != null) {
-          await _installmentRepo.setCurrentInstallment(
-            id: installmentPurchaseId,
-            currentInstallment: inserted.currentInstallment!,
-          );
-        }
       } else {
         final patch = {
           'description': _descCtrl.text.trim(),
           'value': value,
           'fortnight': _fortnight.dbValue,
-          'isPaid': _isPaid,
+          'isPaid': widget.editing?.isPaid ?? false,
           'category': _category.dbValue,
           'isInstallmentPurchase': _isInstallment,
           'currentInstallment': currentInstallment,
@@ -851,17 +972,9 @@ class _MovementFormState extends State<MovementForm> {
         };
 
         await _movementRepo.update(widget.editing!.id, patch);
-
-        if (_isInstallment &&
-            installmentPurchaseId != null &&
-            currentInstallment != null) {
-          await _installmentRepo.setCurrentInstallment(
-            id: installmentPurchaseId,
-            currentInstallment: currentInstallment,
-          );
-        }
       }
 
+      widget.onPersisted();
       _resetForm();
       widget.onSave();
       _snack('Movimento salvo com sucesso.');
@@ -879,17 +992,6 @@ class _MovementFormState extends State<MovementForm> {
 
   @override
   Widget build(BuildContext context) {
-    final currentMonth = DateTime.now().month;
-    final installmentIdsWithMovementThisMonth = widget.movements
-        .where(
-          (m) =>
-              m.isInstallmentPurchase &&
-              m.month == currentMonth &&
-              m.installmentPurchaseId != null,
-        )
-        .map((m) => m.installmentPurchaseId)
-        .toSet();
-
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -1001,159 +1103,61 @@ class _MovementFormState extends State<MovementForm> {
                 },
               ),
               const SizedBox(height: 12),
-              Row(
-                children: [
-                  Expanded(
-                    child: _SwitchRow(
-                      label: 'Já foi pago?',
-                      value: _isPaid,
-                      onChanged: (v) => setState(() => _isPaid = v),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: _SwitchRow(
-                      label: 'É uma compra parcelada?',
-                      value: _isInstallment,
-                      onChanged: (v) {
-                        setState(() {
-                          _isInstallment = v;
-                          if (!v) {
-                            _creatingNewInstallment = false;
-                            _selectedInstallment = null;
-                            _installmentQtyCtrl.clear();
-                            _installmentValueCtrl.clear();
-                          }
-                        });
-                      },
-                    ),
-                  ),
-                ],
+              _SwitchRow(
+                label: 'É uma compra parcelada?',
+                value: _isInstallment,
+                onChanged: (v) {
+                  setState(() {
+                    _isInstallment = v;
+                    if (!v) {
+                      _installmentQtyCtrl.clear();
+                      _installmentValueCtrl.clear();
+                    }
+                  });
+                },
               ),
               if (_isInstallment) ...[
-                const SizedBox(height: 8),
+                const SizedBox(height: 12),
                 Row(
                   children: [
                     Expanded(
-                      child: DropdownMenu<InstallmentPurchase>(
-                        controller: _installmentSelectCtrl,
-                        enabled: !_creatingNewInstallment,
-                        initialSelection: _creatingNewInstallment
-                            ? null
-                            : _selectedInstallment,
-                        dropdownMenuEntries: widget.installments.map((p) {
-                          final alreadyExists =
-                              installmentIdsWithMovementThisMonth.contains(
-                                p.id,
-                              );
-                          return DropdownMenuEntry<InstallmentPurchase>(
-                            value: p,
-                            label: alreadyExists
-                                ? '${p.label} (já incluído)'
-                                : p.label,
-                            enabled: !alreadyExists,
-                          );
-                        }).toList(),
-                        label: const Text('Compra parcelada (existente)'),
-                        onSelected: (v) {
-                          setState(() {
-                            _selectedInstallment = v;
-                            if (v != null) {
-                              _descCtrl.text = v.description;
-                              _category = MovementCategory.debits;
-                              final total =
-                                  v.installmentQuantity * v.installmentValue;
-                              _valueCtrl.text = _formatValueForField(total);
-                            }
-                          });
+                      child: TextFormField(
+                        controller: _installmentQtyCtrl,
+                        keyboardType: TextInputType.number,
+                        decoration: const InputDecoration(
+                          labelText: 'Quantidade de parcelas',
+                          hintText: 'Ex: 12',
+                        ),
+                        validator: (v) {
+                          if (!_isInstallment) return null;
+                          final qty = int.tryParse((v ?? '').trim());
+                          if (qty == null || qty <= 0) return 'Obrigatório';
+                          return null;
                         },
                       ),
                     ),
                     const SizedBox(width: 12),
-                    FilledButton.tonalIcon(
-                      onPressed: () {
-                        setState(() {
-                          _creatingNewInstallment = !_creatingNewInstallment;
-                          if (_creatingNewInstallment) {
-                            _selectedInstallment = null;
-                            _installmentSelectCtrl.clear();
-                          } else {
-                            _installmentQtyCtrl.clear();
-                            _installmentValueCtrl.clear();
-                          }
-                        });
-                      },
-                      icon: Icon(
-                        _creatingNewInstallment ? Icons.close : Icons.add,
-                      ),
-                      label: Text(
-                        _creatingNewInstallment ? 'Cancelar' : 'Nova',
+                    Expanded(
+                      child: TextFormField(
+                        controller: _installmentValueCtrl,
+                        keyboardType: const TextInputType.numberWithOptions(
+                          decimal: true,
+                        ),
+                        inputFormatters: [_CurrencyInputFormatter()],
+                        decoration: const InputDecoration(
+                          labelText: 'Valor da parcela',
+                          hintText: 'Ex: 89,90',
+                        ),
+                        validator: (v) {
+                          if (!_isInstallment) return null;
+                          final unit = _parsePtBrNumber(v ?? '');
+                          if (unit == null || unit <= 0) return 'Obrigatório';
+                          return null;
+                        },
                       ),
                     ),
                   ],
                 ),
-                if (!_creatingNewInstallment)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 6),
-                    child: Builder(
-                      builder: (context) {
-                        if (_selectedInstallment != null) {
-                          return const SizedBox.shrink();
-                        }
-                        return const Text(
-                          'Selecione uma compra parcelada.',
-                          style: TextStyle(color: Color(0xFFB42318)),
-                        );
-                      },
-                    ),
-                  ),
-                if (_creatingNewInstallment) ...[
-                  const SizedBox(height: 12),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: TextFormField(
-                          controller: _installmentQtyCtrl,
-                          keyboardType: TextInputType.number,
-                          decoration: const InputDecoration(
-                            labelText: 'Quantidade de parcelas',
-                            hintText: 'Ex: 12',
-                          ),
-                          validator: (v) {
-                            if (!_isInstallment || !_creatingNewInstallment) {
-                              return null;
-                            }
-                            final qty = int.tryParse((v ?? '').trim());
-                            if (qty == null || qty <= 0) return 'Obrigatório';
-                            return null;
-                          },
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: TextFormField(
-                          controller: _installmentValueCtrl,
-                          keyboardType: const TextInputType.numberWithOptions(
-                            decimal: true,
-                          ),
-                          inputFormatters: [_CurrencyInputFormatter()],
-                          decoration: const InputDecoration(
-                            labelText: 'Valor da parcela',
-                            hintText: 'Ex: 89,90',
-                          ),
-                          validator: (v) {
-                            if (!_isInstallment || !_creatingNewInstallment) {
-                              return null;
-                            }
-                            final unit = _parsePtBrNumber(v ?? '');
-                            if (unit == null || unit <= 0) return 'Obrigatório';
-                            return null;
-                          },
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
               ],
               const SizedBox(height: 12),
               FilledButton.icon(

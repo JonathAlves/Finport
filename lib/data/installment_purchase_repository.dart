@@ -78,4 +78,14 @@ class InstallmentPurchaseRepository {
       (updated as Map).cast<String, dynamic>(),
     );
   }
+
+  Future<InstallmentPurchase> update(String id, Map<String, dynamic> patch) async {
+    final data = await Supa.client
+        .from(table)
+        .update(patch)
+        .eq('id', id)
+        .select('*')
+        .single();
+    return InstallmentPurchase.fromMap((data as Map).cast<String, dynamic>());
+  }
 }

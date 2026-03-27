@@ -23,6 +23,36 @@ class _HomePageState extends State<HomePage> {
   DateTime _lastObservedNow = DateTime.now();
   List<DateTime> _visibleMonths = const [];
   bool _loadingMonths = true;
+  int _currentPageIndex = 0;
+
+  bool get _isOnCurrentMonth {
+    if (_visibleMonths.isEmpty) return true;
+    if (_currentPageIndex < 0 || _currentPageIndex >= _visibleMonths.length) {
+      return true;
+    }
+
+    final now = DateTime.now();
+    final visible = _visibleMonths[_currentPageIndex];
+    return visible.month == now.month && visible.year == now.year;
+  }
+
+  void _goToCurrentMonth() {
+    final now = DateTime.now();
+    final currentIndex = _visibleMonths.indexWhere(
+      (d) => d.month == now.month && d.year == now.year,
+    );
+
+    if (currentIndex < 0 || !_pageCtrl.hasClients) {
+      _loadVisibleMonths(jumpToCurrentMonth: true);
+      return;
+    }
+
+    _pageCtrl.animateToPage(
+      currentIndex,
+      duration: const Duration(milliseconds: 300),
+      curve: Curves.easeOut,
+    );
+  }
 
   @override
   void initState() {
@@ -49,6 +79,13 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _loadVisibleMonths({bool jumpToCurrentMonth = false}) async {
+    final previouslyVisibleMonth =
+        _visibleMonths.isNotEmpty &&
+            _currentPageIndex >= 0 &&
+            _currentPageIndex < _visibleMonths.length
+        ? _visibleMonths[_currentPageIndex]
+        : null;
+
     setState(() => _loadingMonths = true);
     try {
       final now = DateTime.now();
@@ -85,11 +122,29 @@ class _HomePageState extends State<HomePage> {
         _visibleMonths = generated;
       });
 
-      if (jumpToCurrentMonth && _visibleMonths.isNotEmpty) {
-        final currentIndex = _visibleMonths.indexWhere(
-          (d) => d.month == now.month && d.year == now.year,
-        );
-        final safeIndex = currentIndex >= 0 ? currentIndex : 0;
+      if (_visibleMonths.isNotEmpty) {
+        int safeIndex;
+        if (jumpToCurrentMonth) {
+          final currentIndex = _visibleMonths.indexWhere(
+            (d) => d.month == now.month && d.year == now.year,
+          );
+          safeIndex = currentIndex >= 0 ? currentIndex : 0;
+        } else if (previouslyVisibleMonth != null) {
+          final previousIndex = _visibleMonths.indexWhere(
+            (d) =>
+                d.month == previouslyVisibleMonth.month &&
+                d.year == previouslyVisibleMonth.year,
+          );
+          safeIndex = previousIndex >= 0
+              ? previousIndex
+              : _currentPageIndex.clamp(0, _visibleMonths.length - 1);
+        } else {
+          safeIndex = _currentPageIndex.clamp(0, _visibleMonths.length - 1);
+        }
+
+        if (mounted) {
+          setState(() => _currentPageIndex = safeIndex);
+        }
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (!mounted || !_pageCtrl.hasClients) return;
           _pageCtrl.jumpToPage(safeIndex);
@@ -117,6 +172,9 @@ class _HomePageState extends State<HomePage> {
           ? const Center(child: CircularProgressIndicator())
           : PageView.builder(
               controller: _pageCtrl,
+              onPageChanged: (index) {
+                setState(() => _currentPageIndex = index);
+              },
               itemCount: _visibleMonths.length,
               itemBuilder: (context, index) {
                 final date = _visibleMonths[index];
@@ -130,6 +188,24 @@ class _HomePageState extends State<HomePage> {
                   onDataChanged: () => _loadVisibleMonths(),
                 );
               },
+            ),
+      bottomNavigationBar: _isOnCurrentMonth
+          ? null
+          : BottomAppBar(
+              child: SizedBox(
+                height: 60,
+                child: InkWell(
+                  onTap: _goToCurrentMonth,
+                  child: const Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(Icons.home),
+                      SizedBox(height: 2),
+                      Text('Home'),
+                    ],
+                  ),
+                ),
+              ),
             ),
     );
   }
@@ -415,7 +491,17 @@ class _MonthPageState extends State<MonthPage> {
   Future<void> _deleteMovement(Movement m) async {
     setState(() => _loading = true);
     try {
-      await _movementRepo.delete(m.id);
+      if (m.isInstallmentPurchase &&
+          m.installmentPurchaseId != null &&
+          m.currentInstallment != null) {
+        await _movementRepo.deleteInstallmentsFrom(
+          installmentPurchaseId: m.installmentPurchaseId!,
+          fromInstallment: m.currentInstallment!,
+        );
+      } else {
+        await _movementRepo.delete(m.id);
+      }
+
       if (_editing?.id == m.id) _resetForm();
       await _refresh();
       widget.onDataChanged();
@@ -461,7 +547,7 @@ class _MonthPageState extends State<MonthPage> {
     final monthDate = DateTime(widget.year, widget.month);
     final monthLabel = DateFormat.MMMM('pt_BR').format(monthDate);
 
-    final isCurrentMonth = widget.forceShowForm;
+    final showForm = widget.forceShowForm || _editing != null;
 
     return SafeArea(
       child: Stack(
@@ -481,7 +567,7 @@ class _MonthPageState extends State<MonthPage> {
                   textAlign: TextAlign.center,
                 ),
                 const SizedBox(height: 8),
-                if (isCurrentMonth)
+                if (showForm)
                   MovementForm(
                     key: ValueKey(_editing),
                     editing: _editing,
@@ -796,6 +882,18 @@ class _MovementFormState extends State<MovementForm> {
   }
 
   @override
+  void didUpdateWidget(covariant MovementForm oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.editing?.id != widget.editing?.id) {
+      if (widget.editing != null) {
+        _startEditing(widget.editing!);
+      } else {
+        _resetForm();
+      }
+    }
+  }
+
+  @override
   void dispose() {
     _descCtrl.dispose();
     _valueCtrl.dispose();
@@ -873,6 +971,7 @@ class _MovementFormState extends State<MovementForm> {
         }
 
         final now = DateTime.now();
+        final startDate = DateTime(now.year, _selectedMonth);
         final created = await _installmentRepo.insert(
           InstallmentPurchase(
             id: 'tmp',
@@ -882,13 +981,13 @@ class _MovementFormState extends State<MovementForm> {
             currentInstallment: qty,
             isActive: false,
             createdAt: now,
-            month: now.month,
-            year: now.year,
+            month: startDate.month,
+            year: startDate.year,
           ),
         );
 
         for (var i = 0; i < qty; i++) {
-          final installmentDate = DateTime(now.year, now.month + i);
+          final installmentDate = DateTime(startDate.year, startDate.month + i);
           await _movementRepo.insert(
             Movement(
               id: 'tmp',
@@ -956,6 +1055,32 @@ class _MovementFormState extends State<MovementForm> {
           ),
         );
       } else {
+        final editing = widget.editing!;
+
+        if (editing.isInstallmentPurchase &&
+            editing.installmentPurchaseId != null &&
+            _isInstallment) {
+          final seriesPatch = {
+            'description': _descCtrl.text.trim(),
+            'value': value,
+            'fortnight': _fortnight.dbValue,
+            'category': _category.dbValue,
+            'isInstallmentPurchase': true,
+            'installmentValue': installmentValue,
+            'installmentQuantity': installmentQuantity,
+          };
+
+          await _movementRepo.updateInstallmentSeries(
+            editing.installmentPurchaseId!,
+            seriesPatch,
+          );
+
+          await _installmentRepo.update(editing.installmentPurchaseId!, {
+            'description': _descCtrl.text.trim(),
+            'installmentQuantity': installmentQuantity,
+            'installmentValue': installmentValue,
+          });
+        } else {
         final patch = {
           'description': _descCtrl.text.trim(),
           'value': value,
@@ -972,6 +1097,7 @@ class _MovementFormState extends State<MovementForm> {
         };
 
         await _movementRepo.update(widget.editing!.id, patch);
+        }
       }
 
       widget.onPersisted();

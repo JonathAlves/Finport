@@ -38,7 +38,28 @@ class MovementRepository {
     return Movement.fromMap((data as Map).cast<String, dynamic>());
   }
 
+  Future<void> updateInstallmentSeries(
+    String installmentPurchaseId,
+    Map<String, dynamic> patch,
+  ) async {
+    await Supa.client
+        .from(table)
+        .update(patch)
+        .eq('installmentPurchaseId', installmentPurchaseId);
+  }
+
   Future<void> delete(String id) async {
     await Supa.client.from(table).delete().eq('id', id);
+  }
+
+  Future<void> deleteInstallmentsFrom({
+    required String installmentPurchaseId,
+    required int fromInstallment,
+  }) async {
+    await Supa.client
+        .from(table)
+        .delete()
+        .eq('installmentPurchaseId', installmentPurchaseId)
+        .gte('currentInstallment', fromInstallment);
   }
 }

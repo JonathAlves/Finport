@@ -7,7 +7,7 @@
 
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:finport/main.dart';
+import 'package:finport/app/app.dart';
 
 void main() {
   testWidgets('Finport smoke test', (WidgetTester tester) async {

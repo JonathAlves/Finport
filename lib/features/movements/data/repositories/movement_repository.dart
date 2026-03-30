@@ -1,5 +1,5 @@
-import 'package:finport/data/supabase_client.dart';
-import 'package:finport/models/movement.dart';
+import 'package:finport/core/supabase/supabase_client.dart';
+import 'package:finport/features/movements/domain/entities/movement.dart';
 
 class MovementRepository {
   static const table = 'movements';

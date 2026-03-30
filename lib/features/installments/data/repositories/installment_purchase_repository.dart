@@ -1,5 +1,5 @@
-import 'package:finport/data/supabase_client.dart';
-import 'package:finport/models/installment_purchase.dart';
+import 'package:finport/core/supabase/supabase_client.dart';
+import 'package:finport/features/installments/domain/entities/installment_purchase.dart';
 
 class InstallmentPurchaseRepository {
   static const table = 'installment_purchases';

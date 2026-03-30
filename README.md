@@ -2,6 +2,31 @@
 
 App **mobile (Flutter)** para registrar movimentos financeiros e exibir relatórios por **quinzena** e por **categoria**, usando **Supabase** como banco.
 
+## Arquitetura (refatorada)
+
+O projeto agora segue uma estrutura **feature-first** com separacao de responsabilidades para escalar melhor:
+
+```text
+lib/
+  app/                      # bootstrap, tema e roteamento raiz
+  core/                     # configuracoes e infraestrutura compartilhada
+  features/
+    movements/
+      domain/entities/      # modelos de dominio de movimentos
+      data/repositories/    # acesso a dados de movimentos (Supabase)
+      presentation/         # paginas, widgets e formatadores da feature
+    installments/
+      domain/entities/      # modelo de compra parcelada
+      data/repositories/    # acesso a dados de compras parceladas
+```
+
+Principios adotados:
+
+- `app` controla inicializacao e composicao da aplicacao.
+- `core` concentra dependencias transversais (config e cliente Supabase).
+- cada feature agrupa `domain`, `data` e `presentation` para reduzir acoplamento.
+- UI foi dividida em componentes menores para facilitar manutencao e evolucao (ex: futura pagina de perfil).
+
 ## 1) Criar tabelas no Supabase
 
 Rode este SQL no **SQL Editor** do seu projeto Supabase:
